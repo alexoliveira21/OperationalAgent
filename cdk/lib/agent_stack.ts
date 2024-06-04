@@ -1,9 +1,13 @@
-import { Stack, StackProps, RemovalPolicy } from 'aws-cdk-lib';
+import { Stack, StackProps, RemovalPolicy, aws_cloudfront_origins, CfnOutput } from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
+import { CfnIndex } from 'aws-cdk-lib/aws-kendra';
+import { CloudFrontWebDistribution, Distribution, OriginAccessIdentity, ViewerProtocolPolicy } from 'aws-cdk-lib/aws-cloudfront';
+import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
+import path from 'path';
 
 export class AgentStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -42,5 +46,45 @@ export class AgentStack extends Stack {
         allowMethods: apigateway.Cors.ALL_METHODS
       }
     }).root.addMethod('POST');
+
+    // S3 bucket for hosting the frontent
+    const agentFrontendBucket = new s3.Bucket(this, 'AgentFrontendBucket', {
+      websiteIndexDocument: 'index.html',
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true
+    });
+
+    // Origin Access identity for cloudfront to access s3 bucket
+    const originAccessIdentity = new OriginAccessIdentity(this, 'AgentOAI');
+
+    // Grant read access to the OIA identity 
+    agentFrontendBucket.grantRead(originAccessIdentity);
+
+    // CloudFront distribution for the frontend
+    const distribution = new Distribution(this, 'AgentFrontentDistribution', {
+      defaultBehavior: {
+        origin: new aws_cloudfront_origins.S3Origin(agentFrontendBucket, {
+          originAccessIdentity: originAccessIdentity
+        }),
+        viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS
+      }
+    });
+
+    // Deploy React app to the s3 bucket
+    new BucketDeployment(this, 'AgentFrontendDeployment', {
+      sources: [
+        Source.asset(path.join(__dirname, '../../frontend/build'))
+      ],
+      destinationBucket: agentFrontendBucket,
+      distribution: distribution,
+      distributionPaths: ['/*']
+    });
+
+    new CfnOutput(this, 'AgentFrontendUrl', {
+      value: distribution.distributionDomainName,
+      description: 'URL of the deployed agent frontend'
+    });
+
   }
 }
