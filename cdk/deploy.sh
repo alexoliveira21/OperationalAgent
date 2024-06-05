@@ -2,6 +2,10 @@
 # Exit immediately for any failures
 set -e
 
+# Build the CDK app (if using TypeScript)
+echo "Building the CDK app..."
+npm run build
+
 # Bootstrap the environment (if not already bootstrapped)
 echo "Bootstrapping the AWS environment..."
 npx cdk bootstrap

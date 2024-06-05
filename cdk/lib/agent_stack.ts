@@ -4,10 +4,9 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
-import { CfnIndex } from 'aws-cdk-lib/aws-kendra';
-import { CloudFrontWebDistribution, Distribution, OriginAccessIdentity, ViewerProtocolPolicy } from 'aws-cdk-lib/aws-cloudfront';
+import { Distribution, OriginAccessIdentity, ViewerProtocolPolicy } from 'aws-cdk-lib/aws-cloudfront';
 import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
-import path from 'path';
+import * as path from 'path';
 
 export class AgentStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -17,7 +16,7 @@ export class AgentStack extends Stack {
     const bucket = new s3.Bucket(this, 'AgentBucket', {
       versioned: true,
       removalPolicy: RemovalPolicy.DESTROY,
-      autoDeleteObjects: true
+      autoDeleteObjects: true,
     });
 
     // IAM role for Lambda
@@ -25,8 +24,8 @@ export class AgentStack extends Stack {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonS3FullAccess')
-      ]
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonS3FullAccess'),
+      ],
     });
 
     // Lambda function for processing requests
@@ -34,7 +33,7 @@ export class AgentStack extends Stack {
       runtime: lambda.Runtime.PYTHON_3_8,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('lambda'),
-      role: lambdaRole
+      role: lambdaRole,
     });
 
     // API Gateway to expose the Lambda function
@@ -43,48 +42,45 @@ export class AgentStack extends Stack {
       proxy: false,
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS
-      }
+        allowMethods: apigateway.Cors.ALL_METHODS,
+      },
     }).root.addMethod('POST');
 
-    // S3 bucket for hosting the frontent
+    // S3 bucket for hosting the frontend
     const agentFrontendBucket = new s3.Bucket(this, 'AgentFrontendBucket', {
-      websiteIndexDocument: 'index.html',
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: RemovalPolicy.DESTROY,
-      autoDeleteObjects: true
+      autoDeleteObjects: true,
     });
 
-    // Origin Access identity for cloudfront to access s3 bucket
+    // Origin Access Identity for CloudFront to access the S3 bucket
     const originAccessIdentity = new OriginAccessIdentity(this, 'AgentOAI');
 
-    // Grant read access to the OIA identity 
-    agentFrontendBucket.grantRead(originAccessIdentity);
-
+    // Grant read access to the OAI
+    agentFrontendBucket.grantRead(originAccessIdentity)
     // CloudFront distribution for the frontend
-    const distribution = new Distribution(this, 'AgentFrontentDistribution', {
+    const distribution = new Distribution(this, 'AgentFrontendDistribution', {
+      defaultRootObject: 'index.html',
       defaultBehavior: {
         origin: new aws_cloudfront_origins.S3Origin(agentFrontendBucket, {
-          originAccessIdentity: originAccessIdentity
-        }),
-        viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS
-      }
+          originAccessIdentity: originAccessIdentity,
+        })
+      },
     });
 
-    // Deploy React app to the s3 bucket
+    // Deploy React app to the S3 bucket
     new BucketDeployment(this, 'AgentFrontendDeployment', {
       sources: [
-        Source.asset(path.join(__dirname, '../../frontend/build'))
+        Source.asset(path.join(__dirname, '../../frontend/build')),
       ],
       destinationBucket: agentFrontendBucket,
       distribution: distribution,
-      distributionPaths: ['/*']
+      distributionPaths: ['/*'],
     });
 
     new CfnOutput(this, 'AgentFrontendUrl', {
       value: distribution.distributionDomainName,
-      description: 'URL of the deployed agent frontend'
+      description: 'URL of the deployed agent frontend',
     });
-
   }
 }
