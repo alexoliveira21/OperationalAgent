@@ -1,4 +1,4 @@
-import { Stack, StackProps, RemovalPolicy, aws_cloudfront_origins, CfnOutput } from 'aws-cdk-lib';
+import { Stack, StackProps, RemovalPolicy, aws_cloudfront_origins, CfnOutput, Duration } from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
@@ -13,7 +13,7 @@ export class AgentStack extends Stack {
     super(scope, id, props);
 
     // S3 bucket for storing repository data
-    const bucket = new s3.Bucket(this, 'AgentBucket', {
+    const repoBucket = new s3.Bucket(this, 'AgentBucket', {
       versioned: true,
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
@@ -28,24 +28,64 @@ export class AgentStack extends Stack {
       ],
     });
 
-    // Lambda function for processing requests
-    const agentLambda = new lambda.Function(this, 'AgentHandler', {
+    const gitLambdaLayer = lambda.LayerVersion.fromLayerVersionArn(this, 'GitLambdaLayer', 'arn:aws:lambda:us-east-1:553035198032:layer:git-lambda2:8');
+
+    // Lambda function for uploading repository
+    const uploadLambda = new lambda.Function(this, 'UploadHandler', {
       runtime: lambda.Runtime.PYTHON_3_8,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset('lambda'),
+      layers: [gitLambdaLayer],
+      timeout: Duration.minutes(5),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/upload_code'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_8.bundlingImage,
+          command: [
+            'bash', '-c', 
+            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+          ],
+        },
+      }),
       role: lambdaRole,
+      environment: {
+        BUCKET_NAME: repoBucket.bucketName,
+      },
     });
 
-    // API Gateway to expose the Lambda function
-    new apigateway.LambdaRestApi(this, 'AgentApi', {
-      handler: agentLambda,
-      proxy: false,
+    // Lambda function for querying repository
+    const queryLambda = new lambda.Function(this, 'QueryHandler', {
+      runtime: lambda.Runtime.PYTHON_3_8,
+      handler: 'handler.lambda_handler',
+      layers: [gitLambdaLayer],
+      timeout: Duration.minutes(5),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/query'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_8.bundlingImage,
+          command: [
+            'bash', '-c', 
+            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+          ],
+        },
+      }),
+      role: lambdaRole,
+      environment: {
+        BUCKET_NAME: repoBucket.bucketName,
+      },
+    });
+
+    // API Gateway to expose the Lambda functions
+    const api = new apigateway.RestApi(this, 'AgentApi', {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
       },
-    }).root.addMethod('POST');
+    });
 
+    const uploadIntegration = new apigateway.LambdaIntegration(uploadLambda);
+    api.root.resourceForPath('upload').addMethod('POST', uploadIntegration);
+
+    const queryIntegration = new apigateway.LambdaIntegration(queryLambda);
+    api.root.resourceForPath('query').addMethod('POST', queryIntegration);
+    
     // S3 bucket for hosting the frontend
     const agentFrontendBucket = new s3.Bucket(this, 'AgentFrontendBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
