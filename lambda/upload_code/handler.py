@@ -7,6 +7,7 @@ import boto3
 
 s3 = boto3.client('s3')
 BUCKET_NAME = os.environ['BUCKET_NAME']
+KNOWLEDGE_BASE_KEY = 'combined_knowledge_base.json'
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -65,13 +66,22 @@ def lambda_handler(event, context):
                 'contents': repo_structure
             }
             
-            # Convert the JSON object to a string
-            repo_json_str = json.dumps(repo_json, indent=2)
+            # Retrieve the existing knowledge base from S3
+            try:
+                response = s3.get_object(Bucket=BUCKET_NAME, Key=KNOWLEDGE_BASE_KEY)
+                knowledge_base = json.loads(response['Body'].read().decode('utf-8'))
+            except s3.exceptions.NoSuchKey:
+                knowledge_base = {}
             
-            # Upload the JSON string to S3
-            s3_key = f"{repo_name}.json"
-            s3.put_object(Body=repo_json_str, Bucket=BUCKET_NAME, Key=s3_key)
-            logging.info("Processed repository JSON uploaded to S3")
+            # Add the new repository to the knowledge base
+            knowledge_base[repo_name] = repo_json
+            
+            # Convert the updated knowledge base to a string
+            knowledge_base_str = json.dumps(knowledge_base, indent=2)
+            
+            # Upload the updated knowledge base to S3
+            s3.put_object(Body=knowledge_base_str, Bucket=BUCKET_NAME, Key=KNOWLEDGE_BASE_KEY)
+            logging.info("Updated knowledge base uploaded to S3")
             
         return {
             'statusCode': 200,
